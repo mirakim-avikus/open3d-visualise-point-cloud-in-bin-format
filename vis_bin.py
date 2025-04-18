@@ -8,6 +8,16 @@ import argparse
 move_step = 0.1 
 rotation_step = np.pi / 18
 
+color_map = {
+    0:(1, 0, 0),
+    1:(1, 1, 0),
+    2:(0, 1, 0),
+    3:(0, 1, 1),
+    4:(0, 0, 1),
+    5:(1, 0, 1),
+    6:(1, 1, 1),
+}
+
 def get_rotation_callback(pcd, bboxes, axis, angle):
     def callback(vis):
         R = pcd.get_rotation_matrix_from_axis_angle(np.array(axis) * angle)
@@ -30,7 +40,7 @@ def get_translation_callback(pcd, bboxes, delta):
         return False
     return callback
 
-def create_bounding_box(center, size, heading):
+def create_bounding_box(center, size, heading, obj_cls):
     dx, dy, dz = size
     cx, cy, cz = center
 
@@ -40,7 +50,7 @@ def create_bounding_box(center, size, heading):
 
     R = box.get_rotation_matrix_from_axis_angle([0, heading, 0])
     box.rotate(R, center=box.center)
-    box.color = (1, 0, 0)
+    box.color = color_map[obj_cls]
     return box
 
 def read_bin_velodyne(path):
@@ -58,9 +68,8 @@ def main():
     args = parser.parse_args()
 
     data_num = args.data_number
-    data_pcd_path = data_num + ".bin"
-    data_txt_path = data_num + ".txt"
-
+    data_pcd_path = "/root/shared/kitti/kitti/training/velodyne/" + data_num + ".bin"
+    data_txt_path = "/root/shared/kitti/kitti/training/velodyne/" + data_num + ".txt"
     pcd=o3d.open3d.geometry.PointCloud()
     path=data_pcd_path
     example=read_bin_velodyne(path)
@@ -76,9 +85,13 @@ def main():
             center = parts[0:3]
             size = parts[3:6]
             heading = parts[6]
-            bbox = create_bounding_box(center, size, heading)
-            box_list.append(bbox)
-            vis.add_geometry(bbox)
+            obj_cls = int(parts[7])
+            probability = float(parts[8])
+            print(f"probability {probability}")
+            if probability > 0:
+                bbox = create_bounding_box(center, size, heading, obj_cls)
+                box_list.append(bbox)
+                vis.add_geometry(bbox)
 
     # R1 : Bird-Eye View
     # R2 : Side View
@@ -86,13 +99,18 @@ def main():
     R1 = pcd.get_rotation_matrix_from_xyz((0, 0, np.pi / 2))
     R2 = pcd.get_rotation_matrix_from_xyz((-np.pi / 2, 0, 0))
     pcd.rotate(R2 @ R1, center = [0, 0, 0])
-    vis.add_geometry(pcd)
+    colors = np.ones((len(pcd.points), 3)) * 0.5
 
     for box in box_list:
         box.rotate(R1, center = [0, 0, 0])
         box.rotate(R2, center = [0, 0, 0])
+        indices = box.get_point_indices_within_bounding_box(pcd.points)
+        for idx in indices:
+            colors[idx] = [0, 0, 0]
         vis.add_geometry(box)
 
+    pcd.colors = o3d.utility.Vector3dVector(colors)
+    vis.add_geometry(pcd)
 
     # Control Forward & Backward w/ Mouse Control
     vis.register_key_callback(262, get_translation_callback(pcd, box_list, [move_step, 0, 0]))
